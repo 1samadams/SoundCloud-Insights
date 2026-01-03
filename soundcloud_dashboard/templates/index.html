@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SoundCloud Insights</title>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: linear-gradient(145deg, #0a0a0f 0%, #12121a 50%, #0a0a0f 100%);
+            color: #fff;
+            min-height: 100vh;
+        }
+        
+        .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+        
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid rgba(255,85,0,0.2);
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            background: linear-gradient(90deg, #ff5500, #ff8844);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .header .subtitle { color: #666; font-size: 13px; margin-top: 4px; }
+        
+        /* Breadcrumb */
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 20px;
+            font-size: 13px;
+        }
+        
+        .breadcrumb a {
+            color: #ff5500;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        
+        .breadcrumb a:hover { text-decoration: underline; }
+        .breadcrumb span { color: #555; }
+        .breadcrumb .current { color: #fff; font-weight: 600; }
+        
+        /* Stats Row */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        
+        .stat-card {
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            padding: 16px;
+            border: 1px solid rgba(255,85,0,0.1);
+        }
+        
+        .stat-card .label { color: #666; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .stat-card .value { font-size: 24px; font-weight: 700; margin-top: 6px; }
+        .stat-card .icon { float: right; font-size: 20px; opacity: 0.7; }
+        
+        /* Layout */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        
+        .full-width { grid-column: 1 / -1; }
+        
+        .panel {
+            background: rgba(255,255,255,0.02);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255,85,0,0.1);
+        }
+        
+        .panel h3 {
+            font-size: 14px;
+            color: #ff5500;
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .panel h3 .count {
+            background: rgba(255,85,0,0.2);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+        }
+        
+        /* List Items */
+        .list-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+            cursor: pointer;
+            border-radius: 6px;
+            transition: background 0.15s;
+        }
+        
+        .list-item:hover { background: rgba(255,85,0,0.08); }
+        .list-item:last-child { border-bottom: none; }
+        
+        .list-item .rank { width: 28px; color: #555; font-size: 12px; font-weight: 600; }
+        .list-item .rank.top { color: #ff5500; font-size: 14px; }
+        
+        .list-item .info { flex: 1; min-width: 0; }
+        .list-item .title { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .list-item .meta { font-size: 11px; color: #555; margin-top: 2px; }
+        
+        .list-item .bar-wrap { width: 80px; margin: 0 12px; }
+        .list-item .bar-bg { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; }
+        .list-item .bar { height: 100%; background: linear-gradient(90deg, #ff5500, #ff8844); border-radius: 2px; }
+        
+        .list-item .plays { color: #ff5500; font-weight: 600; font-size: 12px; min-width: 60px; text-align: right; }
+        
+        .list-item .arrow { color: #444; margin-left: 8px; }
+        
+        /* Map */
+        #map-container {
+            background: #0d0d15;
+            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        #map { width: 100%; height: 400px; }
+        
+        .map-tooltip {
+            position: absolute;
+            background: rgba(0,0,0,0.95);
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1px solid #ff5500;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s;
+            z-index: 100;
+            font-size: 13px;
+        }
+        
+        .map-tooltip.visible { opacity: 1; }
+        .map-tooltip .city { font-weight: 600; }
+        .map-tooltip .plays { color: #ff5500; font-size: 16px; font-weight: 700; margin-top: 4px; }
+        
+        .map-legend {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            padding: 12px;
+            font-size: 11px;
+            color: #666;
+        }
+        
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; background: #ff5500; }
+        .legend-gradient { width: 60px; height: 10px; background: linear-gradient(90deg, rgba(255,85,0,0.2), rgba(255,85,0,1)); border-radius: 2px; }
+        
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #555;
+        }
+        
+        .empty-state .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+        
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #333;
+            border-top-color: #ff5500;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        /* Back button */
+        .back-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            background: rgba(255,85,0,0.15);
+            border: 1px solid rgba(255,85,0,0.3);
+            border-radius: 6px;
+            color: #ff5500;
+            font-size: 12px;
+            font-weight: 500;
+            cursor: pointer;
+            margin-bottom: 16px;
+        }
+        
+        .back-btn:hover { background: rgba(255,85,0,0.25); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>☁️ SoundCloud Insights</h1>
+                <p class="subtitle">@<span id="username">loading...</span> • Last 30 days</p>
+            </div>
+        </div>
+        
+        <div id="breadcrumb" class="breadcrumb"></div>
+        
+        <div id="stats-row" class="stats-row">
+            <div class="stat-card">
+                <span class="icon">▶️</span>
+                <div class="label">Total Plays</div>
+                <div class="value" id="stat-plays">-</div>
+            </div>
+            <div class="stat-card">
+                <span class="icon">🌍</span>
+                <div class="label">Countries</div>
+                <div class="value" id="stat-countries">-</div>
+            </div>
+            <div class="stat-card">
+                <span class="icon">🏙️</span>
+                <div class="label">Cities</div>
+                <div class="value" id="stat-cities">-</div>
+            </div>
+            <div class="stat-card">
+                <span class="icon">👑</span>
+                <div class="label">#1 Track</div>
+                <div class="value" id="stat-top-track">-</div>
+            </div>
+        </div>
+        
+        <div id="content"></div>
+    </div>
+    
+    <script>
+        // State
+        let state = {
+            view: 'overview',  // overview, track, country
+            trackUrn: null,
+            countryCode: null,
+            data: {}
+        };
+        
+        // Format numbers
+        const fmt = n => n?.toLocaleString() ?? '-';
+        const fmtK = n => n >= 1000 ? (n/1000).toFixed(1) + 'K' : n;
+        
+        // Navigation
+        function navigate(view, params = {}) {
+            state.view = view;
+            state.trackUrn = params.trackUrn || null;
+            state.countryCode = params.countryCode || null;
+            render();
+        }
+        
+        // Render breadcrumb
+        function renderBreadcrumb() {
+            const bc = document.getElementById('breadcrumb');
+            let html = '<a onclick="navigate(\'overview\')">🏠 Overview</a>';
+            
+            if (state.view === 'track' && state.trackUrn) {
+                const track = state.data.tracks?.find(t => t.urn === state.trackUrn);
+                html += ` <span>›</span> <span class="current">🎵 ${track?.title || 'Track'}</span>`;
+            } else if (state.view === 'country' && state.countryCode) {
+                const country = state.data.aggregate?.countries?.find(c => c.code === state.countryCode);
+                html += ` <span>›</span> <span class="current">🌍 ${country?.name || state.countryCode}</span>`;
+            } else if (state.view === 'track-country' && state.trackUrn && state.countryCode) {
+                const track = state.data.tracks?.find(t => t.urn === state.trackUrn);
+                const country = track?.countries?.find(c => c.code === state.countryCode);
+                html += ` <span>›</span> <a onclick="navigate('track', {trackUrn: '${state.trackUrn}'})">🎵 ${track?.title || 'Track'}</a>`;
+                html += ` <span>›</span> <span class="current">🌍 ${country?.name || state.countryCode}</span>`;
+            }
+            
+            bc.innerHTML = html;
+        }
+        
+        // Main render
+        function render() {
+            renderBreadcrumb();
+            const content = document.getElementById('content');
+            
+            if (state.view === 'overview') {
+                renderOverview(content);
+            } else if (state.view === 'track') {
+                renderTrack(content);
+            } else if (state.view === 'country') {
+                renderCountry(content);
+            } else if (state.view === 'track-country') {
+                renderTrackCountry(content);
+            }
+        }
+        
+        // Overview
+        function renderOverview(container) {
+            const tracks = state.data.tracks || [];
+            const countries = state.data.aggregate?.countries || [];
+            const cities = state.data.aggregate?.cities || [];
+            const maxTrackPlays = tracks[0]?.plays || 1;
+            const maxCountryPlays = countries[0]?.plays || 1;
+            
+            container.innerHTML = `
+                <div class="main-grid">
+                    <div class="panel full-width">
+                        <h3>🗺️ Global Reach</h3>
+                        <div id="map-container">
+                            <svg id="map"></svg>
+                            <div class="map-tooltip" id="tooltip">
+                                <div class="city"></div>
+                                <div class="plays"></div>
+                            </div>
+                        </div>
+                        <div class="map-legend">
+                            <div class="legend-item"><div class="legend-dot"></div> City (size = plays)</div>
+                            <div class="legend-item"><div class="legend-gradient"></div> Country intensity</div>
+                        </div>
+                    </div>
+                    
+                    <div class="panel">
+                        <h3>🎵 Top Tracks <span class="count">${tracks.length}</span></h3>
+                        <div id="tracks-list">
+                            ${tracks.slice(0, 12).map((t, i) => `
+                                <div class="list-item" onclick="navigate('track', {trackUrn: '${t.urn}'})">
+                                    <div class="rank ${i < 3 ? 'top' : ''}">${i === 0 ? '👑' : i + 1}</div>
+                                    <div class="info">
+                                        <div class="title">${t.title}</div>
+                                        <div class="meta">${t.countries?.length || 0} countries</div>
+                                    </div>
+                                    <div class="bar-wrap"><div class="bar-bg"><div class="bar" style="width:${(t.plays/maxTrackPlays)*100}%"></div></div></div>
+                                    <div class="plays">${fmtK(t.plays)}</div>
+                                    <div class="arrow">›</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                    
+                    <div class="panel">
+                        <h3>🌍 Top Countries <span class="count">${countries.length}</span></h3>
+                        <div id="countries-list">
+                            ${countries.slice(0, 12).map((c, i) => `
+                                <div class="list-item" onclick="navigate('country', {countryCode: '${c.code}'})">
+                                    <div class="rank ${i < 3 ? 'top' : ''}">${i + 1}</div>
+                                    <div class="info">
+                                        <div class="title">${c.name}</div>
+                                        <div class="meta">${c.code}</div>
+                                    </div>
+                                    <div class="bar-wrap"><div class="bar-bg"><div class="bar" style="width:${(c.plays/maxCountryPlays)*100}%"></div></div></div>
+                                    <div class="plays">${fmtK(c.plays)}</div>
+                                    <div class="arrow">›</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            initMap(cities, countries);
+        }
+        
+        // Track detail view
+        function renderTrack(container) {
+            const track = state.data.tracks?.find(t => t.urn === state.trackUrn);
+            if (!track) {
+                container.innerHTML = '<div class="empty-state"><div class="icon">🔍</div>Track not found</div>';
+                return;
+            }
+            
+            const countries = track.countries || [];
+            const cities = track.cities || [];
+            const maxCountryPlays = countries[0]?.plays || 1;
+            const maxCityPlays = cities[0]?.plays || 1;
+            
+            container.innerHTML = `
+                <div class="main-grid">
+                    <div class="panel full-width">
+                        <h3>🎵 ${track.title}</h3>
+                        <div style="display:flex;gap:24px;color:#888;font-size:13px;margin-top:-8px;margin-bottom:16px;">
+                            <span>▶️ ${fmt(track.plays)} plays</span>
+                            <span>🌍 ${countries.length} countries</span>
+                            <span>🏙️ ${cities.length} cities</span>
+                            <span>📅 ${track.created_at || 'N/A'}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="panel">
+                        <h3>🌍 Countries for this track <span class="count">${countries.length}</span></h3>
+                        ${countries.length === 0 ? '<div class="empty-state">No country data</div>' : `
+                            <div>
+                                ${countries.slice(0, 15).map((c, i) => `
+                                    <div class="list-item" onclick="navigate('track-country', {trackUrn: '${state.trackUrn}', countryCode: '${c.code}'})">
+                                        <div class="rank ${i < 3 ? 'top' : ''}">${i + 1}</div>
+                                        <div class="info">
+                                            <div class="title">${c.name}</div>
+                                            <div class="meta">${c.code}</div>
+                                        </div>
+                                        <div class="bar-wrap"><div class="bar-bg"><div class="bar" style="width:${(c.plays/maxCountryPlays)*100}%"></div></div></div>
+                                        <div class="plays">${fmtK(c.plays)}</div>
+                                        <div class="arrow">›</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `}
+                    </div>
+                    
+                    <div class="panel">
+                        <h3>🏙️ Cities for this track <span class="count">${cities.length}</span></h3>
+                        ${cities.length === 0 ? '<div class="empty-state">No city data</div>' : `
+                            <div>
+                                ${cities.slice(0, 15).map((c, i) => `
+                                    <div class="list-item">
+                                        <div class="rank ${i < 3 ? 'top' : ''}">${i + 1}</div>
+                                        <div class="info">
+                                            <div class="title">${c.name}</div>
+                                            <div class="meta">${c.country_code}</div>
+                                        </div>
+                                        <div class="bar-wrap"><div class="bar-bg"><div class="bar" style="width:${(c.plays/maxCityPlays)*100}%"></div></div></div>
+                                        <div class="plays">${fmtK(c.plays)}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `}
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Country detail view
+        function renderCountry(container) {
+            const countryAgg = state.data.aggregate?.countries?.find(c => c.code === state.countryCode);
+            const countryTracks = state.data.country_tracks?.[state.countryCode];
+            
+            if (!countryAgg && !countryTracks) {
+                container.innerHTML = '<div class="empty-state"><div class="icon">🔍</div>Country not found</div>';
+                return;
+            }
+            
+            const name = countryAgg?.name || countryTracks?.name || state.countryCode;
+            const totalPlays = countryAgg?.plays || countryTracks?.total_plays || 0;
+            const tracks = countryTracks?.tracks || [];
+            const maxPlays = tracks[0]?.plays || 1;
+            
+            // Get cities for this country
+            const cities = (state.data.aggregate?.cities || []).filter(c => c.country_code === state.countryCode);
+            const maxCityPlays = cities[0]?.plays || 1;
+            
+            container.innerHTML = `
+                <div class="main-grid">
+                    <div class="panel full-width">
+                        <h3>🌍 ${name}</h3>
+                        <div style="display:flex;gap:24px;color:#888;font-size:13px;margin-top:-8px;margin-bottom:16px;">
+                            <span>▶️ ${fmt(totalPlays)} total plays</span>
+                            <span>🎵 ${tracks.length} tracks</span>
+                            <span>🏙️ ${cities.length} cities</span>
+                        </div>
+                    </div>
+                    
+                    <div class="panel">
+                        <h3>🎵 Tracks in ${name} <span class="count">${tracks.length}</span></h3>
+                        ${tracks.length === 0 ? '<div class="empty-state">No track data for this country</div>' : `
+                            <div>
+                                ${tracks.slice(0, 15).map((t, i) => `
+                                    <div class="list-item" onclick="navigate('track', {trackUrn: '${t.urn}'})">
+                                        <div class="rank ${i < 3 ? 'top' : ''}">${i + 1}</div>
+                                        <div class="info">
+                                            <div class="title">${t.title}</div>
+                                        </div>
+                                        <div class="bar-wrap"><div class="bar-bg"><div class="bar" style="width:${(t.plays/maxPlays)*100}%"></div></div></div>
+                                        <div class="plays">${fmtK(t.plays)}</div>
+                                        <div class="arrow">›</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `}
+                    </div>
+                    
+                    <div class="panel">
+                        <h3>🏙️ Cities in ${name} <span class="count">${cities.length}</span></h3>
+                        ${cities.length === 0 ? '<div class="empty-state">No city data</div>' : `
+                            <div>
+                                ${cities.slice(0, 15).map((c, i) => `
+                                    <div class="list-item">
+                                        <div class="rank ${i < 3 ? 'top' : ''}">${i + 1}</div>
+                                        <div class="info">
+                                            <div class="title">${c.name}</div>
+                                        </div>
+                                        <div class="bar-wrap"><div class="bar-bg"><div class="bar" style="width:${(c.plays/maxCityPlays)*100}%"></div></div></div>
+                                        <div class="plays">${fmtK(c.plays)}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `}
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Track + Country detail (cities for a track in a specific country)
+        function renderTrackCountry(container) {
+            const track = state.data.tracks?.find(t => t.urn === state.trackUrn);
+            const country = track?.countries?.find(c => c.code === state.countryCode);
+            
+            if (!track || !country) {
+                container.innerHTML = '<div class="empty-state"><div class="icon">🔍</div>Not found</div>';
+                return;
+            }
+            
+            // Filter cities for this country
+            const cities = (track.cities || []).filter(c => c.country_code === state.countryCode);
+            const maxCityPlays = cities[0]?.plays || 1;
+            
+            container.innerHTML = `
+                <div class="main-grid">
+                    <div class="panel full-width">
+                        <h3>🎵 ${track.title} → 🌍 ${country.name}</h3>
+                        <div style="display:flex;gap:24px;color:#888;font-size:13px;margin-top:-8px;margin-bottom:16px;">
+                            <span>▶️ ${fmt(country.plays)} plays in ${country.name}</span>
+                            <span>🏙️ ${cities.length} cities</span>
+                        </div>
+                    </div>
+                    
+                    <div class="panel full-width">
+                        <h3>🏙️ Cities in ${country.name} <span class="count">${cities.length}</span></h3>
+                        ${cities.length === 0 ? '<div class="empty-state">No city-level data for this track in this country</div>' : `
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 24px;">
+                                ${cities.map((c, i) => `
+                                    <div class="list-item">
+                                        <div class="rank ${i < 3 ? 'top' : ''}">${i + 1}</div>
+                                        <div class="info">
+                                            <div class="title">${c.name}</div>
+                                        </div>
+                                        <div class="bar-wrap"><div class="bar-bg"><div class="bar" style="width:${(c.plays/maxCityPlays)*100}%"></div></div></div>
+                                        <div class="plays">${fmtK(c.plays)}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `}
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Map initialization
+        function initMap(cities, countries) {
+            const container = document.getElementById('map-container');
+            const width = container.clientWidth;
+            const height = 400;
+            
+            const svg = d3.select('#map')
+                .attr('width', width)
+                .attr('height', height);
+            
+            svg.selectAll('*').remove();
+            
+            const projection = d3.geoNaturalEarth1()
+                .scale(width / 5.5)
+                .translate([width / 2, height / 2]);
+            
+            const path = d3.geoPath().projection(projection);
+            
+            // Country plays lookup
+            const countryPlays = {};
+            countries.forEach(c => { countryPlays[c.code] = c.plays; });
+            const maxCountryPlays = Math.max(...countries.map(c => c.plays));
+            
+            // Load world map
+            d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(world => {
+                const countriesGeo = topojson.feature(world, world.objects.countries);
+                
+                // Country name to ISO mapping (partial)
+                const nameToCode = {
+                    "United States of America": "US", "Vietnam": "VN", "Canada": "CA",
+                    "Ukraine": "UA", "South Korea": "KR", "Bangladesh": "BD", "Indonesia": "ID",
+                    "Germany": "DE", "Egypt": "EG", "United Kingdom": "GB", "Poland": "PL",
+                    "Australia": "AU", "Japan": "JP", "Saudi Arabia": "SA", "France": "FR",
+                    "Brazil": "BR", "Spain": "ES", "Pakistan": "PK", "Netherlands": "NL",
+                    "Belarus": "BY", "India": "IN", "Taiwan": "TW", "Kuwait": "KW"
+                };
+                
+                // Draw countries
+                svg.append('g')
+                    .selectAll('path')
+                    .data(countriesGeo.features)
+                    .join('path')
+                    .attr('d', path)
+                    .attr('fill', d => {
+                        const code = nameToCode[d.properties.name];
+                        const plays = countryPlays[code] || 0;
+                        if (plays === 0) return '#1a1a2e';
+                        const intensity = Math.pow(plays / maxCountryPlays, 0.4);
+                        return `rgba(255, 85, 0, ${0.15 + intensity * 0.7})`;
+                    })
+                    .attr('stroke', '#2a2a4a')
+                    .attr('stroke-width', 0.5)
+                    .style('cursor', d => {
+                        const code = nameToCode[d.properties.name];
+                        return countryPlays[code] ? 'pointer' : 'default';
+                    })
+                    .on('click', (event, d) => {
+                        const code = nameToCode[d.properties.name];
+                        if (code && countryPlays[code]) {
+                            navigate('country', { countryCode: code });
+                        }
+                    });
+                
+                // City coordinates
+                const cityCoords = {
+                    "Chicago": [41.8781, -87.6298], "Montreal": [45.5017, -73.5673],
+                    "Hanoi": [21.0285, 105.8542], "Toronto": [43.6532, -79.3832],
+                    "Ho Chi Minh City": [10.8231, 106.6297], "Washington": [38.9072, -77.0369],
+                    "New York": [40.7128, -74.0060], "Miami": [25.7617, -80.1918],
+                    "Kyiv": [50.4501, 30.5234], "Cairo": [30.0444, 31.2357],
+                    "Da Nang": [16.0544, 108.2022], "Lviv": [49.8397, 24.0297],
+                    "Gangnam-gu": [37.5172, 127.0473], "Denpasar": [-8.6705, 115.2126],
+                    "Los Angeles": [34.0522, -118.2437], "Dnipro": [48.4647, 35.0462],
+                    "Jakarta": [-6.2088, 106.8456], "Medan": [3.5952, 98.6722],
+                    "Frankfurt am Main": [50.1109, 8.6821], "Melbourne": [-37.8136, 144.9631],
+                    "Minsk": [53.9006, 27.5590], "Sydney": [-33.8688, 151.2093],
+                    "Riyadh": [24.7136, 46.6753], "Warsaw": [52.2297, 21.0122],
+                    "Paris": [48.8566, 2.3522], "Amsterdam": [52.3676, 4.9041],
+                    "Seoul": [37.5665, 126.9780], "Singapore": [1.3521, 103.8198],
+                };
+                
+                const maxCityPlays = Math.max(...cities.map(c => c.plays));
+                const tooltip = document.getElementById('tooltip');
+                
+                // Draw cities
+                svg.append('g')
+                    .selectAll('circle')
+                    .data(cities.filter(c => cityCoords[c.name]))
+                    .join('circle')
+                    .attr('cx', d => projection([cityCoords[d.name][1], cityCoords[d.name][0]])[0])
+                    .attr('cy', d => projection([cityCoords[d.name][1], cityCoords[d.name][0]])[1])
+                    .attr('r', d => 3 + (d.plays / maxCityPlays) * 12)
+                    .attr('fill', 'rgba(255, 85, 0, 0.85)')
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 1)
+                    .style('cursor', 'pointer')
+                    .on('mouseenter', (event, d) => {
+                        tooltip.querySelector('.city').textContent = `${d.name}, ${d.country_code}`;
+                        tooltip.querySelector('.plays').textContent = `${fmt(d.plays)} plays`;
+                        tooltip.style.left = (event.offsetX + 10) + 'px';
+                        tooltip.style.top = (event.offsetY - 50) + 'px';
+                        tooltip.classList.add('visible');
+                    })
+                    .on('mouseleave', () => {
+                        tooltip.classList.remove('visible');
+                    });
+            });
+        }
+        
+        // Load data and init
+        async function init() {
+            try {
+                // Load summary
+                const summary = await fetch('/api/summary').then(r => r.json());
+                document.getElementById('username').textContent = summary.username;
+                document.getElementById('stat-plays').textContent = fmt(summary.total_plays);
+                document.getElementById('stat-countries').textContent = summary.total_countries;
+                document.getElementById('stat-cities').textContent = summary.total_cities + '+';
+                document.getElementById('stat-top-track').textContent = fmtK(summary.top_track_plays);
+                
+                // Load full data
+                const [tracks, countries, cities] = await Promise.all([
+                    fetch('/api/tracks').then(r => r.json()),
+                    fetch('/api/countries').then(r => r.json()),
+                    fetch('/api/cities').then(r => r.json()),
+                ]);
+                
+                // Load country_tracks mapping
+                const countryTracks = {};
+                for (const c of countries) {
+                    try {
+                        const data = await fetch(`/api/country/${c.code}`).then(r => r.json());
+                        if (!data.error) countryTracks[c.code] = data;
+                    } catch (e) {}
+                }
+                
+                state.data = {
+                    tracks,
+                    aggregate: { countries, cities },
+                    country_tracks: countryTracks
+                };
+                
+                render();
+            } catch (error) {
+                console.error('Failed to load data:', error);
+                document.getElementById('content').innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">⚠️</div>
+                        <p>Failed to load data. Make sure soundcloud_insights.json exists.</p>
+                    </div>
+                `;
+            }
+        }
+        
+        init();
+    </script>
+</body>
+</html>
