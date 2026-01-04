@@ -41,6 +41,7 @@ load_env()
 # Configuration
 OAUTH_TOKEN = os.environ.get("SOUNDCLOUD_OAUTH_TOKEN")
 GRAPHQL_URL = "https://graph.soundcloud.com/graphql"
+REST_API_BASE = "https://api-v2.soundcloud.com"
 
 if not OAUTH_TOKEN:
     print("❌ Error: SOUNDCLOUD_OAUTH_TOKEN environment variable not set.")
@@ -68,6 +69,49 @@ HEADERS = {
     "referer": "https://insights-ui.soundcloud.com/",
     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
 }
+
+HEADERS_REST = {
+    "Authorization": f"OAuth {OAUTH_TOKEN}",
+    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Origin": "https://soundcloud.com",
+    "Referer": "https://soundcloud.com/",
+}
+
+
+def get_all_tracks_rest():
+    """Fetch ALL tracks via REST API (no 50 limit)."""
+    # First get user ID from token
+    try:
+        user_id = OAUTH_TOKEN.split('-')[2]
+    except:
+        print("❌ Could not parse user ID from token")
+        return []
+    
+    tracks = []
+    url = f"{REST_API_BASE}/users/{user_id}/tracks"
+    params = {"limit": 50, "offset": 0, "linked_partitioning": 1}
+    
+    while True:
+        response = requests.get(url, headers=HEADERS_REST, params=params)
+        if response.status_code != 200:
+            break
+        
+        data = response.json()
+        batch = data.get("collection", [])
+        tracks.extend(batch)
+        
+        print(f"   Fetched {len(tracks)} tracks...", end='\r')
+        
+        next_href = data.get("next_href")
+        if next_href:
+            url = next_href
+            params = {}
+        else:
+            break
+    
+    print(f"   Fetched {len(tracks)} tracks total    ")
+    return tracks
 
 # GraphQL Queries
 QUERY_TOP_CITIES = """
@@ -132,8 +176,8 @@ query Me {
 """
 
 
-def graphql_request(query, variables=None, operation_name=None):
-    """Make a GraphQL request to SoundCloud."""
+def graphql_request(query, variables=None, operation_name=None, retries=3):
+    """Make a GraphQL request to SoundCloud with retry logic."""
     payload = {
         "query": query,
         "variables": variables or {},
@@ -141,19 +185,30 @@ def graphql_request(query, variables=None, operation_name=None):
     if operation_name:
         payload["operationName"] = operation_name
     
-    response = requests.post(GRAPHQL_URL, headers=HEADERS, json=payload)
-    
-    if response.status_code != 200:
-        print(f"❌ Error: {response.status_code}")
-        print(f"   Response: {response.text[:500]}")
-        return None
-    
-    data = response.json()
-    if "errors" in data:
-        print(f"❌ GraphQL Error: {data['errors']}")
-        return None
-    
-    return data.get("data")
+    for attempt in range(retries):
+        try:
+            response = requests.post(GRAPHQL_URL, headers=HEADERS, json=payload, timeout=30)
+            
+            if response.status_code != 200:
+                print(f"❌ Error: {response.status_code}")
+                print(f"   Response: {response.text[:500]}")
+                return None
+            
+            data = response.json()
+            if "errors" in data:
+                print(f"❌ GraphQL Error: {data['errors']}")
+                return None
+            
+            return data.get("data")
+        
+        except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
+            if attempt < retries - 1:
+                wait_time = (attempt + 1) * 5  # 5s, 10s, 15s
+                print(f"\n   ⚠️ Connection error, retrying in {wait_time}s... ({attempt + 1}/{retries})")
+                time.sleep(wait_time)
+            else:
+                print(f"\n❌ Failed after {retries} attempts: {e}")
+                raise
 
 
 def get_me():
@@ -161,7 +216,7 @@ def get_me():
     return graphql_request(QUERY_ME, operation_name="Me")
 
 
-def get_top_cities(timewindow="DAYS_30", limit=50, track_urn=None):
+def get_top_cities(timewindow="DAYS_30", limit=200, track_urn=None):
     """Get top cities by plays."""
     variables = {
         "metric": "PLAYS",
@@ -171,7 +226,7 @@ def get_top_cities(timewindow="DAYS_30", limit=50, track_urn=None):
     return graphql_request(QUERY_TOP_CITIES, variables, "TopCitiesByWindow")
 
 
-def get_top_countries(timewindow="DAYS_30", limit=50, track_urn=None):
+def get_top_countries(timewindow="DAYS_30", limit=200, track_urn=None):
     """Get top countries by plays."""
     variables = {
         "metric": "PLAYS",
@@ -181,7 +236,7 @@ def get_top_countries(timewindow="DAYS_30", limit=50, track_urn=None):
     return graphql_request(QUERY_TOP_COUNTRIES, variables, "TopCountriesByWindow")
 
 
-def get_top_tracks(timewindow="DAYS_30", limit=50):
+def get_top_tracks(timewindow="DAYS_30", limit=500):
     """Get top tracks by plays."""
     variables = {
         "metric": "PLAYS",
@@ -207,53 +262,80 @@ def main():
     print(f"   Followers: {me.get('followersCount', 0):,}")
     print(f"   Pro: {me.get('isPro', False)}")
     
-    # Get top tracks first
-    print("\n🎵 Fetching top tracks (last 30 days)...")
-    tracks_data = get_top_tracks(limit=50)
+    # Get ALL tracks via REST API (GraphQL caps at 50)
+    print("\n🎵 Fetching all tracks via REST API...")
+    all_tracks_rest = get_all_tracks_rest()
     
-    if not tracks_data or not tracks_data.get("topTracksByWindow"):
+    if not all_tracks_rest:
         print("❌ No tracks found.")
         return
     
-    tracks = tracks_data["topTracksByWindow"]
-    print(f"   Found {len(tracks)} tracks")
+    # Also get top 50 from GraphQL for play counts in the insights window
+    print("\n📈 Fetching play counts from Insights API...")
+    tracks_data = get_top_tracks(timewindow="ALL_TIME", limit=50)
+    graphql_tracks = tracks_data.get("topTracksByWindow", []) if tracks_data else []
+    
+    # Create a lookup of URN -> plays from GraphQL data
+    urn_to_plays = {}
+    for t in graphql_tracks:
+        urn_to_plays[t["track"]["urn"]] = t["count"]
+    
+    # Convert REST tracks to our format, with plays from GraphQL where available
+    tracks = []
+    for t in all_tracks_rest:
+        urn = f"soundcloud:tracks:{t['id']}"
+        tracks.append({
+            "track": {
+                "urn": urn,
+                "title": t.get("title", ""),
+                "artworkUrl": t.get("artwork_url", ""),
+                "permalink": t.get("permalink", ""),
+                "permalinkUrl": t.get("permalink_url", ""),
+                "createdAt": t.get("created_at", ""),
+            },
+            "count": urn_to_plays.get(urn, t.get("playback_count", 0) or 0)
+        })
+    
+    # Sort by plays descending
+    tracks.sort(key=lambda x: x["count"], reverse=True)
+    print(f"   Total tracks: {len(tracks)}")
     
     # Get aggregate geo data
-    print("\n🌍 Fetching aggregate geographic data...")
+    print("\n🌍 Fetching aggregate geographic data (all time)...")
     
-    agg_countries_data = get_top_countries()
+    agg_countries_data = get_top_countries(timewindow="ALL_TIME")
     agg_countries = agg_countries_data.get("topCountriesByWindow", []) if agg_countries_data else []
     print(f"   Countries: {len(agg_countries)}")
     
-    agg_cities_data = get_top_cities()
+    agg_cities_data = get_top_cities(timewindow="ALL_TIME")
     agg_cities = agg_cities_data.get("topCitiesByWindow", []) if agg_cities_data else []
     print(f"   Cities: {len(agg_cities)}")
     
-    # Now get per-track geo data for top tracks
-    print(f"\n📊 Fetching per-track geographic data...")
+    # Now get per-track geo data for ALL tracks
+    print(f"\n📊 Fetching per-track geographic data for {len(tracks)} tracks...")
     print("-" * 55)
     
     tracks_with_geo = []
+    total_tracks = len(tracks)
     
-    # Limit to top 20 tracks to avoid rate limiting
-    for i, track_item in enumerate(tracks[:20], 1):
+    for i, track_item in enumerate(tracks, 1):
         track = track_item["track"]
         track_urn = track["urn"]
         title = track["title"][:35]
         
-        print(f"   [{i}/20] {title}...", end=" ", flush=True)
+        print(f"   [{i}/{total_tracks}] {title}...", end=" ", flush=True)
         
         # Get countries for this track
-        countries_data = get_top_countries(track_urn=track_urn)
+        countries_data = get_top_countries(timewindow="ALL_TIME", track_urn=track_urn)
         track_countries = []
         if countries_data and countries_data.get("topCountriesByWindow"):
             track_countries = countries_data["topCountriesByWindow"]
         
         # Small delay to be nice to the API
-        time.sleep(0.3)
+        time.sleep(0.5)
         
         # Get cities for this track
-        cities_data = get_top_cities(track_urn=track_urn)
+        cities_data = get_top_cities(timewindow="ALL_TIME", track_urn=track_urn)
         track_cities = []
         if cities_data and cities_data.get("topCitiesByWindow"):
             track_cities = cities_data["topCitiesByWindow"]
@@ -287,7 +369,7 @@ def main():
         })
         
         # Rate limit protection
-        time.sleep(0.3)
+        time.sleep(0.5)
     
     # Build country -> tracks mapping
     print("\n🔄 Building country-to-tracks mapping...")
